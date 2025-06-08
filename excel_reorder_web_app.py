@@ -2,10 +2,9 @@
 """
 Flask Web App for Excel Column Processor with CSV Export
 
-This app allows three workflows:
-1) Upload an origin Excel to clean/reorder per preference and download a new Excel.
-2) Upload a processed Excel to map headers to the import-template and download Excel.
-3) Upload a processed Excel to map headers to the import-template and download CSV.
+This app allows two workflows:
+1) Upload an origin Excel to clean/reorder per preference and download a new Excel ending in `..._readable.xlsx`.
+2) Upload a processed Excel to map headers to the import-template and download CSV ending in `..._superdispatch.csv`.
 
 Dependencies:
     pip install flask pandas xlsxwriter openpyxl
@@ -35,17 +34,15 @@ SORT_ORDER = ['OriginState','OriginCity','DestinationState','DestinationCity','V
 FIRST_COLUMN_WIDTH = 25
 OTHER_COLUMN_WIDTH = 17
 
-# HTML form with three file inputs
+# HTML form with two file inputs
 HTML = '''
 <!doctype html>
 <title>Excel Column Processor</title>
 <h1>Excel Column Processor</h1>
 <form method=post enctype=multipart/form-data>
-  <p><strong>1) Upload Original Excel to clean:</strong><br>
+  <p><strong>1) Upload Original Excel to clean (Excel output):</strong><br>
      <input type=file name=origin accept=".xls,.xlsx"></p>
-  <p><strong>2) OR Upload Processed Excel for Excel output:</strong><br>
-     <input type=file name=processed_excel accept=".xls,.xlsx"></p>
-  <p><strong>3) OR Upload Processed Excel for CSV output:</strong><br>
+  <p><strong>2) OR Upload Processed Excel for template CSV output:</strong><br>
      <input type=file name=processed_csv accept=".xls,.xlsx"></p>
   <p><input type=submit value=Process></p>
 </form>
@@ -68,13 +65,41 @@ def clean_origin(df):
 
 
 def map_to_import_template(df):
-    # Load header template
+    # 1) Read in the template headers, stripping whitespace
     tpl = pd.read_csv(IMPORT_TEMPLATE_CSV, nrows=0)
-    desired = [c.strip() for c in tpl.columns.tolist()]
-    # Clean existing headers and reindex
-    df.columns = [c.strip() for c in df.columns]
-    df = df.reindex(columns=desired)
-    return df
+    desired_headers = [h.strip() for h in tpl.columns.tolist()]
+
+    # 2) Explicit map from your cleaned Excel columns → template header names
+    col_map = {
+        'ShipmentNumber':           'Order ID',
+        'Vin':                      'VIN',
+        'OriginAddress':            'Pickup Street',
+        'OriginCity':               'Pickup City',
+        'OriginState':              'Pickup State',
+        'OriginZip':                'Pickup Zip Code',
+        'OriginContactPhone':       'Pickup Contact Phone',
+        'DestinationAddress':       'Delivery Street',
+        'DestinationCity':          'Delivery City',
+        'DestinationState':         'Delivery State',
+        'DestinationZip':           'Delivery Zip Code',
+        'DestinationContactPhone':  'Delivery Contact Phone',
+        'Price':                    'Carrier Price per Vehicle',
+    }
+
+    # 3) Build new DataFrame in template order
+    new_df = pd.DataFrame(index=df.index)
+    for header in desired_headers:
+        # find which cleaned‐Excel column maps here (if any)
+        pref_col = next((k for k,v in col_map.items() if v == header), None)
+        if pref_col and pref_col in df.columns:
+            # pull in your data
+            new_df[header] = df[pref_col]
+        else:
+            # otherwise blank
+            new_df[header] = [''] * len(df)
+
+    return new_df
+
 
 
 def to_excel_bytes(df):
@@ -102,32 +127,27 @@ def to_csv_bytes(df):
 def upload():
     if request.method == 'POST':
         f_origin = request.files.get('origin')
-        f_xlsx = request.files.get('processed_excel')
         f_csv = request.files.get('processed_csv')
 
-        # Decide which workflow
         if f_origin and f_origin.filename:
             df = pd.read_excel(f_origin)
             df_out = clean_origin(df)
             out_buf = to_excel_bytes(df_out)
             ext = 'xlsx'
-        elif f_xlsx and f_xlsx.filename:
-            df = pd.read_excel(f_xlsx)
-            df_out = map_to_import_template(df)
-            out_buf = to_excel_bytes(df_out)
-            ext = 'xlsx'
+            suffix = 'readable'
         elif f_csv and f_csv.filename:
             df = pd.read_excel(f_csv)
             df_out = map_to_import_template(df)
             out_buf = to_csv_bytes(df_out)
             ext = 'csv'
+            suffix = 'superdispatch'
         else:
             return 'No file uploaded', 400
 
         # Build dynamic filename
         now = datetime.datetime.now()
         date_str = f"{now.strftime('%B')}_{now.day}"
-        filename = f"{date_str}_output.{ext}"
+        filename = f"{date_str}_{suffix}.{ext}"
 
         mimetype = 'text/csv' if ext == 'csv' else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         return send_file(
