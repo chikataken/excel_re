@@ -10,7 +10,6 @@ Dependencies:
     pip install flask pandas xlsxwriter openpyxl
 """
 import os
-import re
 import io
 import datetime
 import pandas as pd
@@ -64,37 +63,29 @@ def clean_origin(df):
         df = df.sort_values(by=sort_cols)
     return df
 
-# Helper to normalize header names
-def clean_name(s: str) -> str:
-    return re.sub(r'[^a-z0-9]', '', s.lower())
 
-# Mapping for CSV export
 def map_to_import_template(df):
-    # 1) Read template headers
+    # Read desired template headers
     tpl = pd.read_csv(IMPORT_TEMPLATE_CSV, nrows=0)
     desired_headers = [h.strip() for h in tpl.columns.tolist()]
-
-    # 2) Build lookup of cleaned df columns
-    pref_map = { clean_name(c): c for c in df.columns }
-
-    # 3) Synonyms for special cases
-    synonyms = {
-        'orderid': 'ShipmentNumber',  # Order ID → ShipmentNumber
-        # add more if needed
-    }
-
-    # 4) Construct new DataFrame in template order
+    # Build DataFrame with preference columns in order
     data = {}
-    for header in desired_headers:
-        key = clean_name(header)
-        if key in pref_map and pref_map[key] in df.columns:
-            data[header] = df[pref_map[key]]
-        elif key in synonyms and synonyms[key] in df.columns:
-            data[header] = df[synonyms[key]]
+    for i, pref_col in enumerate(PREFERENCE_COLUMNS):
+        if pref_col in df.columns:
+            data[pref_col] = df[pref_col]
         else:
-            data[header] = [''] * len(df)
-
-    return pd.DataFrame(data)
+            data[pref_col] = [''] * len(df)
+    df_pref = pd.DataFrame(data)
+    # Rename columns to desired template headers
+    # Map only up to number of preference columns
+    rename_map = {PREFERENCE_COLUMNS[i]: desired_headers[i] for i in range(min(len(PREFERENCE_COLUMNS), len(desired_headers)))}
+    df_renamed = df_pref.rename(columns=rename_map)
+    # Add any extra template headers beyond preference columns as blank
+    for extra_header in desired_headers[len(PREFERENCE_COLUMNS):]:
+        df_renamed[extra_header] = [''] * len(df)
+    # Reorder to match desired_headers exactly
+    df_out = df_renamed[desired_headers]
+    return df_out
 
 
 def to_excel_bytes(df):
@@ -121,42 +112,36 @@ def to_csv_bytes(df):
 @app.route('/', methods=['GET','POST'])
 def upload():
     if request.method == 'POST':
-        try:
-            f_origin = request.files.get('origin')
-            f_csv = request.files.get('processed_csv')
+        f_origin = request.files.get('origin')
+        f_csv = request.files.get('processed_csv')
 
-            if f_origin and f_origin.filename:
-                df = pd.read_excel(f_origin)
-                df_out = clean_origin(df)
-                out_buf = to_excel_bytes(df_out)
-                ext, suffix = 'xlsx', 'readable'
-                mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        if f_origin and f_origin.filename:
+            df = pd.read_excel(f_origin)
+            df_out = clean_origin(df)
+            out_buf = to_excel_bytes(df_out)
+            ext = 'xlsx'
+            suffix = 'readable'
+        elif f_csv and f_csv.filename:
+            df = pd.read_excel(f_csv)
+            df_out = map_to_import_template(df)
+            out_buf = to_csv_bytes(df_out)
+            ext = 'csv'
+            suffix = 'superdispatch'
+        else:
+            return 'No file uploaded', 400
 
-            elif f_csv and f_csv.filename:
-                df = pd.read_excel(f_csv)
-                df_out = map_to_import_template(df)
-                out_buf = to_csv_bytes(df_out)
-                ext, suffix = 'csv', 'superdispatch'
-                mimetype = 'text/csv'
+        # Build dynamic filename
+        now = datetime.datetime.now()
+        date_str = f"{now.strftime('%B')}_{now.day}"
+        filename = f"{date_str}_{suffix}.{ext}"
 
-            else:
-                return 'No file uploaded', 400
-
-            # Build dynamic filename
-            now = datetime.datetime.now()
-            date_str = f"{now.strftime('%B')}_{now.day}"
-            filename = f"{date_str}_{suffix}.{ext}"
-
-            return send_file(
-                out_buf,
-                as_attachment=True,
-                download_name=filename,
-                mimetype=mimetype
-            )
-        except Exception as e:
-            app.logger.exception("Processing error")
-            return f"Internal server error: {e}", 500
-
+        mimetype = 'text/csv' if ext == 'csv' else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        return send_file(
+            out_buf,
+            as_attachment=True,
+            download_name=filename,
+            mimetype=mimetype
+        )
     return render_template_string(HTML)
 
 if __name__ == '__main__':
