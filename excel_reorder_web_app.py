@@ -47,12 +47,12 @@ OTHER_COLUMN_WIDTH = 17
 # HTML form with two file inputs
 HTML = '''
 <!doctype html>
-<title>Excel Column Processor</title>
-<h1>Excel Column Processor</h1>
+<title>Tesla Excel Cleaner</title>
+<h1>Tesla Excel Cleaner</h1>
 <form method=post enctype=multipart/form-data>
-  <p><strong>1) Upload Original Excel to clean (Excel output):</strong><br>
+  <p><strong>1) Tesla --> Readable:</strong><br>
      <input type=file name=origin accept=".xls,.xlsx"></p>
-  <p><strong>2) OR Upload Processed Excel for template CSV output:</strong><br>
+  <p><strong>2) Readable --> SuperDispatch:</strong><br>
      <input type=file name=processed_csv accept=".xls,.xlsx"></p>
   <p><input type=submit value=Process></p>
 </form>
