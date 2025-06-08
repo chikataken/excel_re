@@ -14,6 +14,7 @@ import io
 import datetime
 import pandas as pd
 from flask import Flask, request, send_file, render_template_string
+from flask import Response
 
 app = Flask(__name__)
 
@@ -48,6 +49,13 @@ HTML = '''
 </form>
 '''
 
+def download_buffer(buf, filename, mimetype):
+    data = buf.getvalue()
+    headers = {
+      'Content-Disposition': f'attachment; filename="{filename}"'
+    }
+    return Response(data, mimetype=mimetype, headers=headers)
+
 def clean_origin(df):
     # Add Price column if missing
     if 'Price' not in df.columns:
@@ -65,6 +73,11 @@ def clean_origin(df):
 
 
 def map_to_import_template(df):
+    # 1) Read just the headers of the import template via an explicit context
+    with open(IMPORT_TEMPLATE_CSV, 'r', newline='') as f:
+        tpl = pd.read_csv(f, nrows=0)
+
+    desired_headers = [h.strip() for h in tpl.columns]
     # Read desired template headers
     tpl = pd.read_csv(IMPORT_TEMPLATE_CSV, nrows=0)
     desired_headers = [h.strip() for h in tpl.columns.tolist()]
