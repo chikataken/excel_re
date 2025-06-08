@@ -174,5 +174,50 @@ def upload():
         )
     return render_template_string(HTML)
 
+@app.route('/template', methods=['GET', 'POST'])
+def generate_template():
+    if request.method == 'POST':
+        f = request.files.get('file')
+        if not f:
+            return 'No file uploaded', 400
+
+        df = pd.read_excel(f)
+        df_out = process_df(df)
+
+        # Load the column mapping from your CSV file
+        mapping_path = '/opt/excel_app/import-template.csv'
+        if not os.path.exists(mapping_path):
+            return 'Template mapping file not found.', 500
+
+        mapping_df = pd.read_csv(mapping_path)
+        column_map = dict(zip(mapping_df['OriginalName'], mapping_df['LogicalName']))
+
+        # Rename columns using the mapping
+        df_renamed = df_out.rename(columns=column_map)
+
+        # Convert to CSV
+        output = io.StringIO()
+        df_renamed.to_csv(output, index=False)
+        output.seek(0)
+
+        return send_file(
+            io.BytesIO(output.getvalue().encode()),
+            as_attachment=True,
+            download_name='template.csv',
+            mimetype='text/csv'
+        )
+
+    # Simple upload form
+    return render_template_string('''
+    <!doctype html>
+    <title>Generate Template</title>
+    <h1>Upload Excel File to Generate CSV Template</h1>
+    <form method=post enctype=multipart/form-data>
+      <input type=file name=file accept=".xls,.xlsx">
+      <input type=submit value="Generate Template CSV">
+    </form>
+    ''')
+
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
