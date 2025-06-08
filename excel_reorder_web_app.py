@@ -13,10 +13,19 @@ import os
 import io
 import datetime
 import pandas as pd
+import traceback
 from flask import Flask, request, send_file, render_template_string
 from flask import Response
 
 app = Flask(__name__)
+app.config['PROPAGATE_EXCEPTIONS'] = True  
+
+@app.errorhandler(Exception)
+def handle_all_exceptions(e):
+    trace = traceback.format_exc()
+    app.logger.error("Uncaught exception:\n%s", trace)
+    # Return the exception text in your response so you can see it in the browser
+    return f"<pre>{trace}</pre>", 500
 
 # Path to header template CSV
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
