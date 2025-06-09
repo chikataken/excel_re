@@ -12,11 +12,12 @@ Dependencies:
 import os
 import io
 import datetime
-import pandas as pd
 import traceback
-from flask import Flask, request, send_file, render_template_string, Response
+import pandas as pd
+from flask import Flask, request, send_file, render_template, url_for
 
-app = Flask(__name__)
+# Initialize Flask with static and template folders
+app = Flask(__name__, static_folder='static', template_folder='templates')
 app.config['PROPAGATE_EXCEPTIONS'] = True
 
 @app.errorhandler(Exception)
@@ -71,25 +72,6 @@ PREDEFINED_VALUES = {
     'Delivery Date Type': 'estimated'
 }
 
-# HTML form
-HTML = '''
-<!doctype html>
-<title>Tesla Excel Cleaner</title>
-<h1>Tesla Excel Cleaner</h1>
-<form id="uploadForm" method="post" enctype="multipart/form-data">
-  <p><strong>1) Tesla --> Readable:</strong><br>
-     <input type="file" name="origin" accept=".xls,.xlsx"></p>
-  <p><strong>2) Readable --> SuperDispatch:</strong><br>
-     <input type="file" name="processed_csv" accept=".xls,.xlsx"></p>
-  <p><input type="submit" value="Process"></p>
-</form>
-<script>
-  // Reset file inputs after submission to allow re-uploading
-  document.getElementById('uploadForm').addEventListener('submit', function() {
-    setTimeout(function() { document.getElementById('uploadForm').reset(); }, 500);
-  });
-</script>
-'''
 
 def clean_origin(df):
     if 'Price' not in df.columns:
@@ -97,7 +79,8 @@ def clean_origin(df):
     cols = [c for c in PREFERENCE_COLUMNS + ['Price'] + EXTRA_COLUMNS if c in df.columns]
     df = df[cols]
     extras = [c for c in EXTRA_COLUMNS if c in df.columns]
-    final_order = [c for c in FIRST_COLUMNS if c in df.columns] + [c for c in OTHER_COLUMNS if c in df.columns] + extras
+    final_order = [c for c in FIRST_COLUMNS if c in df.columns] + \
+                  [c for c in OTHER_COLUMNS if c in df.columns] + extras
     sort_cols = [c for c in SORT_ORDER if c in df.columns]
     if sort_cols:
         df = df.sort_values(by=sort_cols)
@@ -165,12 +148,14 @@ def upload():
             out_buf = to_excel_bytes(df_out)
             ext = 'xlsx'
             suffix = 'readable'
+
         elif f_csv and f_csv.filename:
             df = pd.read_excel(f_csv)
             df_out = map_to_import_template(df)
             out_buf = to_csv_bytes(df_out)
             ext = 'csv'
             suffix = 'superdispatch'
+
         else:
             return 'No file uploaded', 400
 
@@ -178,14 +163,16 @@ def upload():
         date_str = f"{now.strftime('%B')}_{now.day}"
         filename = f"{date_str}_{suffix}.{ext}"
 
-        mimetype = 'text/csv' if ext == 'csv' else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        mimetype = 'text/csv' if ext == 'csv' else \
+                   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         return send_file(
             out_buf,
             as_attachment=True,
             download_name=filename,
             mimetype=mimetype
         )
-    return render_template_string(HTML)
+    # Render the styled template on GET
+    return render_template('index.html')
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=5001)
