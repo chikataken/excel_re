@@ -58,7 +58,7 @@ CSV_TO_SOURCE_MAP = {
     'Delivery Street': 'DestinationAddress',
     'Delivery Zip Code': 'DestinationZip',
     'Delivery Contact Phone': 'DestinationContactPhone',
-    'Carrier Price per vehicle': 'Price',
+    'Carrier Price per Vehicle': 'Price',
     'Carrier Pickup Scheduled At': 'ExpectedPickupDate',
     'Carrier Delivery Scheduled At': 'NeedByDate'
 }
