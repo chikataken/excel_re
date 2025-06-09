@@ -14,17 +14,15 @@ import io
 import datetime
 import pandas as pd
 import traceback
-from flask import Flask, request, send_file, render_template_string
-from flask import Response
+from flask import Flask, request, send_file, render_template_string, Response
 
 app = Flask(__name__)
-app.config['PROPAGATE_EXCEPTIONS'] = True  
+app.config['PROPAGATE_EXCEPTIONS'] = True
 
 @app.errorhandler(Exception)
 def handle_all_exceptions(e):
     trace = traceback.format_exc()
     app.logger.error("Uncaught exception:\n%s", trace)
-    # Return the exception text in your response so you can see it in the browser
     return f"<pre>{trace}</pre>", 500
 
 # Path to header template CSV
@@ -33,80 +31,104 @@ IMPORT_TEMPLATE_CSV = os.path.join(BASE_DIR, 'import-template.csv')
 
 # Constants for origin cleaning
 PREFERENCE_COLUMNS = [
-    'ShipmentNumber','Vin','OriginState','OriginCity',
-    'OriginAddress','OriginZip','OriginContactPhone',
-    'DestinationState','DestinationCity','DestinationAddress',
-    'DestinationZip','DestinationContactPhone'
+    'ShipmentNumber', 'Vin', 'OriginState', 'OriginCity',
+    'OriginAddress', 'OriginZip', 'OriginContactPhone',
+    'DestinationState', 'DestinationCity', 'DestinationAddress',
+    'DestinationZip', 'DestinationContactPhone'
 ]
-FIRST_COLUMNS = ['Vin','OriginState','OriginCity','DestinationState','DestinationCity','Price']
+FIRST_COLUMNS = ['Vin', 'OriginState', 'OriginCity', 'DestinationState', 'DestinationCity', 'Price']
 OTHER_COLUMNS = [c for c in PREFERENCE_COLUMNS if c not in FIRST_COLUMNS]
-SORT_ORDER = ['OriginState','OriginCity','DestinationState','DestinationCity','Vin']
+SORT_ORDER = ['OriginState', 'OriginCity', 'DestinationState', 'DestinationCity', 'Vin']
 FIRST_COLUMN_WIDTH = 25
 OTHER_COLUMN_WIDTH = 17
+# Extra columns to include at end
+EXTRA_COLUMNS = ['ExpectedPickupDate', 'NeedByDate']
 
-# HTML form with two file inputs
+# Mapping from CSV headers to readable-file columns
+CSV_TO_SOURCE_MAP = {
+    'VIN': 'Vin',
+    'Order ID': 'ShipmentNumber',
+    'Pickup State': 'OriginState',
+    'Pickup City': 'OriginCity',
+    'Pickup Street': 'OriginAddress',
+    'Pickup Zip Code': 'OriginZip',
+    'Pickup Contact Phone': 'OriginContactPhone',
+    'Delivery State': 'DestinationState',
+    'Delivery City': 'DestinationCity',
+    'Delivery Street': 'DestinationAddress',
+    'Delivery Zip Code': 'DestinationZip',
+    'Delivery Contact Phone': 'DestinationContactPhone',
+    'Carrier Price per vehicle': 'Price',
+    'Carrier Pickup Scheduled At': 'ExpectedPickupDate',
+    'Carrier Delivery Scheduled At': 'NeedByDate'
+}
+
+# Predefined static values for certain CSV headers
+PREDEFINED_VALUES = {
+    'Carrier Payment Method': 'check',
+    'Carrier Payment Terms': '10_days',
+    'Pickup Date Type': 'estimated',
+    'Delivery Date Type': 'estimated'
+}
+
+# HTML form
 HTML = '''
 <!doctype html>
 <title>Tesla Excel Cleaner</title>
 <h1>Tesla Excel Cleaner</h1>
-<form method=post enctype=multipart/form-data>
+<form id="uploadForm" method="post" enctype="multipart/form-data">
   <p><strong>1) Tesla --> Readable:</strong><br>
-     <input type=file name=origin accept=".xls,.xlsx"></p>
+     <input type="file" name="origin" accept=".xls,.xlsx"></p>
   <p><strong>2) Readable --> SuperDispatch:</strong><br>
-     <input type=file name=processed_csv accept=".xls,.xlsx"></p>
-  <p><input type=submit value=Process></p>
+     <input type="file" name="processed_csv" accept=".xls,.xlsx"></p>
+  <p><input type="submit" value="Process"></p>
 </form>
+<script>
+  // Reset file inputs after submission to allow re-uploading
+  document.getElementById('uploadForm').addEventListener('submit', function() {
+    setTimeout(function() { document.getElementById('uploadForm').reset(); }, 500);
+  });
+</script>
 '''
 
-def download_buffer(buf, filename, mimetype):
-    data = buf.getvalue()
-    headers = {
-      'Content-Disposition': f'attachment; filename="{filename}"'
-    }
-    return Response(data, mimetype=mimetype, headers=headers)
-
 def clean_origin(df):
-    # Add Price column if missing
     if 'Price' not in df.columns:
         df['Price'] = ''
-    # Filter and reorder by preference
-    cols = [c for c in PREFERENCE_COLUMNS + ['Price'] if c in df.columns]
+    cols = [c for c in PREFERENCE_COLUMNS + ['Price'] + EXTRA_COLUMNS if c in df.columns]
     df = df[cols]
-    final_order = [c for c in FIRST_COLUMNS if c in df.columns] + [c for c in OTHER_COLUMNS if c in df.columns]
-    df = df[final_order]
-    # Multi-level sort
+    extras = [c for c in EXTRA_COLUMNS if c in df.columns]
+    final_order = [c for c in FIRST_COLUMNS if c in df.columns] + [c for c in OTHER_COLUMNS if c in df.columns] + extras
     sort_cols = [c for c in SORT_ORDER if c in df.columns]
     if sort_cols:
         df = df.sort_values(by=sort_cols)
+    df = df[final_order]
     return df
 
 
 def map_to_import_template(df):
-    # 1) Read just the headers of the import template via an explicit context
-    with open(IMPORT_TEMPLATE_CSV, 'r', newline='') as f:
-        tpl = pd.read_csv(f, nrows=0)
-
-    desired_headers = [h.strip() for h in tpl.columns]
-    # Read desired template headers
+    # Load desired headers from template
     tpl = pd.read_csv(IMPORT_TEMPLATE_CSV, nrows=0)
     desired_headers = [h.strip() for h in tpl.columns.tolist()]
-    # Build DataFrame with preference columns in order
-    data = {}
-    for i, pref_col in enumerate(PREFERENCE_COLUMNS):
-        if pref_col in df.columns:
-            data[pref_col] = df[pref_col]
+    df_out = pd.DataFrame(index=df.index)
+    # Map or fill for each header
+    for header in desired_headers:
+        if header in PREDEFINED_VALUES:
+            df_out[header] = [PREDEFINED_VALUES[header]] * len(df)
+        elif header in CSV_TO_SOURCE_MAP:
+            src_col = CSV_TO_SOURCE_MAP[header]
+            if src_col in df.columns:
+                if header in ('Pickup State', 'Delivery State'):
+                    series = df[src_col].astype(str).str.upper().str.slice(0, 2)
+                elif header in ('Carrier Pickup Scheduled At', 'Carrier Delivery Scheduled At'):
+                    dt = pd.to_datetime(df[src_col], errors='coerce')
+                    series = dt.dt.strftime('%m/%d/%Y').fillna('')
+                else:
+                    series = df[src_col].astype(str)
+                df_out[header] = series
+            else:
+                df_out[header] = [''] * len(df)
         else:
-            data[pref_col] = [''] * len(df)
-    df_pref = pd.DataFrame(data)
-    # Rename columns to desired template headers
-    # Map only up to number of preference columns
-    rename_map = {PREFERENCE_COLUMNS[i]: desired_headers[i] for i in range(min(len(PREFERENCE_COLUMNS), len(desired_headers)))}
-    df_renamed = df_pref.rename(columns=rename_map)
-    # Add any extra template headers beyond preference columns as blank
-    for extra_header in desired_headers[len(PREFERENCE_COLUMNS):]:
-        df_renamed[extra_header] = [''] * len(df)
-    # Reorder to match desired_headers exactly
-    df_out = df_renamed[desired_headers]
+            df_out[header] = [''] * len(df)
     return df_out
 
 
@@ -152,7 +174,6 @@ def upload():
         else:
             return 'No file uploaded', 400
 
-        # Build dynamic filename
         now = datetime.datetime.now()
         date_str = f"{now.strftime('%B')}_{now.day}"
         filename = f"{date_str}_{suffix}.{ext}"
