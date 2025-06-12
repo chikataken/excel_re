@@ -33,3 +33,39 @@ h2.card-title {
   color: #666666;              /* slightly gray font */
   font-size: 0.9em;
 }
+
+/* Append to static/css/style.css */
+
+/* --- Dropzone styling --- */
+#drop-area {
+  border: 2px dashed #cccccc;
+  border-radius: 8px;
+  padding: 20px;
+  text-align: center;
+  background-color: #fafafa;
+  transition: background-color 0.3s, border-color 0.3s;
+  cursor: pointer;
+}
+#drop-area.highlight {
+  border-color: #00aaff;
+  background-color: #f0faff;
+}
+.dropbox-icon {
+  width: 50px;
+  display: inline-block;
+}
+/* Make “Choose File” button gray & transparent */
+.file-btn {
+  background-color: transparent !important;
+  border: 2px solid #ccc !important;
+  color: #666 !important;
+}
+
+.file-btn:hover,
+.file-btn:focus {
+  background-color: rgba(0, 0, 0, 0.05) !important;
+  border-color: #999 !important;
+  color: #333 !important;
+}
+
+/* (Your existing styles go above or below) */
