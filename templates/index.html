@@ -32,21 +32,17 @@
         </div>
 
         <form id="uploadForm" method="post" enctype="multipart/form-data">
-          <!-- Drag-and-drop + file-picker -->
-          <div id="drop-area" class="mb-4">
-            <p class="mb-2"> Tesla downloaded: .xls, .xlsx</p>
-            <p class="mb-3 small text-muted"></p>
-            <label for="fileInput" class="btn btn-primary file-btn">
-              select file
+          <div class="mb-4">
+            <label class="form-label">
+              <strong>Tesla downloaded Excel → SuperDispatch CSV w/ price column</strong>
             </label>
-            <input id="fileInput"
+            <input class="form-control"
                    type="file"
                    name="file"
-                   accept=".xls,.xlsx"
-                   style="display: none;">
+                   accept=".xls,.xlsx">
           </div>
 
-          <button type="submit" class="btn btn-primary w-100">CSV for "Import Orders"</button>
+          <button type="submit" class="btn btn-primary w-100">Process</button>
 
           <!-- Confirmation text -->
           <div id="downloadConfirm" class="mt-2 text-success fst-italic" style="display:none;">
@@ -64,46 +60,17 @@
     crossorigin="anonymous"
   ></script>
 
-  <!-- Drag-and-drop + reset + confirmation script -->
+  <!-- Clear file input after submission -->
   <script>
-    const dropArea = document.getElementById('drop-area');
-    const fileInput = document.getElementById('fileInput');
     const form = document.getElementById('uploadForm');
     const confirmTxt = document.getElementById('downloadConfirm');
-
-    // Highlight drop area
-    ['dragenter','dragover'].forEach(evt =>
-      dropArea.addEventListener(evt, e => {
-        e.preventDefault(); e.stopPropagation();
-        dropArea.classList.add('highlight');
-      })
-    );
-    ['dragleave','drop'].forEach(evt =>
-      dropArea.addEventListener(evt, e => {
-        e.preventDefault(); e.stopPropagation();
-        dropArea.classList.remove('highlight');
-      })
-    );
-
-    // Handle file drop
-    dropArea.addEventListener('drop', e => {
-      const dt = e.dataTransfer;
-      if (dt.files && dt.files.length) {
-        fileInput.files = dt.files;
-      }
-    });
-
-    // Open file dialog on button click
-    dropArea.addEventListener('click', () =>
-      fileInput.click()
-    );
-
-    // Show confirmation & reset on submit
-    form.addEventListener('submit', () => {
+    form.addEventListener('submit', function() {
+      // show the “downloaded” message once the browser starts the download
       setTimeout(() => {
         confirmTxt.style.display = 'block';
-        form.reset();
       }, 500);
+      // reset the file input
+      setTimeout(() => this.reset(), 500);
     });
   </script>
 </body>
