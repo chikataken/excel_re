@@ -1,178 +1,147 @@
 #!/usr/bin/env python3
 """
-Flask Web App for Excel Column Processor with CSV Export
+Flask Web App for Excel → Readable CSV Export
 
-This app allows two workflows:
-1) Upload an origin Excel to clean/reorder per preference and download a new Excel ending in `..._readable.xlsx`.
-2) Upload a processed Excel to map headers to the import-template and download CSV ending in `..._superdispatch.csv`.
+This app allows one workflow:
+1) Upload an origin Excel to rename/reorder per predefined mappings,
+   add new "model" and "Carrier Price per Vehicle" columns, and download a CSV
+   ending in ..._superdispatch.csv.
 
 Dependencies:
-    pip install flask pandas xlsxwriter openpyxl
+    pip install flask pandas openpyxl
 """
-import os
 import io
 import datetime
-import traceback
 import pandas as pd
-from flask import Flask, request, send_file, render_template, url_for
+from flask import Flask, request, send_file, render_template
 
-# Initialize Flask with static and template folders
 app = Flask(__name__, static_folder='static', template_folder='templates')
 app.config['PROPAGATE_EXCEPTIONS'] = True
 
-@app.errorhandler(Exception)
-def handle_all_exceptions(e):
-    trace = traceback.format_exc()
-    app.logger.error("Uncaught exception:\n%s", trace)
-    return f"<pre>{trace}</pre>", 500
+# === Static lookups ===
+# USPS state name → two-letter code
+STATE_ABBR = {
+    'ALABAMA':'AL','ALASKA':'AK','ARIZONA':'AZ','ARKANSAS':'AR','CALIFORNIA':'CA',
+    'COLORADO':'CO','CONNECTICUT':'CT','DELAWARE':'DE','FLORIDA':'FL','GEORGIA':'GA',
+    'HAWAII':'HI','IDAHO':'ID','ILLINOIS':'IL','INDIANA':'IN','IOWA':'IA',
+    'KANSAS':'KS','KENTUCKY':'KY','LOUISIANA':'LA','MAINE':'ME','MARYLAND':'MD',
+    'MASSACHUSETTS':'MA','MICHIGAN':'MI','MINNESOTA':'MN','MISSISSIPPI':'MS','MISSOURI':'MO',
+    'MONTANA':'MT','NEBRASKA':'NE','NEVADA':'NV','NEW HAMPSHIRE':'NH','NEW JERSEY':'NJ',
+    'NEW MEXICO':'NM','NEW YORK':'NY','NORTH CAROLINA':'NC','NORTH DAKOTA':'ND','OHIO':'OH',
+    'OKLAHOMA':'OK','OREGON':'OR','PENNSYLVANIA':'PA','RHODE ISLAND':'RI','SOUTH CAROLINA':'SC',
+    'SOUTH DAKOTA':'SD','TENNESSEE':'TN','TEXAS':'TX','UTAH':'UT','VERMONT':'VT',
+    'VIRGINIA':'VA','WASHINGTON':'WA','WEST VIRGINIA':'WV','WISCONSIN':'WI','WYOMING':'WY'
+}
 
-# Path to header template CSV
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-IMPORT_TEMPLATE_CSV = os.path.join(BASE_DIR, 'import-template.csv')
+# VIN fourth-character → model name
+MODEL_MAP = {
+    'C': 'cyber',
+    '3': '3\'',
+    'R': 'ROADSTER',
+    'T': 'SEMI',
+    'S': 'S',
+    'X': 'X',
+    'Y': 'Y'
+}
 
-# Constants for origin cleaning
-PREFERENCE_COLUMNS = [
-    'ShipmentNumber', 'Vin', 'OriginState', 'OriginCity',
-    'OriginAddress', 'OriginZip', 'OriginContactPhone',
-    'DestinationState', 'DestinationCity', 'DestinationAddress',
-    'DestinationZip', 'DestinationContactPhone'
-]
-FIRST_COLUMNS = ['Vin', 'OriginState', 'OriginCity', 'DestinationState', 'DestinationCity', 'Price']
-OTHER_COLUMNS = [c for c in PREFERENCE_COLUMNS if c not in FIRST_COLUMNS]
-SORT_ORDER = ['OriginState', 'OriginCity', 'DestinationState', 'DestinationCity', 'Vin']
-FIRST_COLUMN_WIDTH = 25
-OTHER_COLUMN_WIDTH = 17
-# Extra columns to include at end
-EXTRA_COLUMNS = ['ExpectedPickupDate', 'NeedByDate']
+# === Constant columns with predetermined values ===
+CONST_COLS = {
+    'Carrier Payment Method':   'check',
+    'Carrier Payment Terms':    '10_days',
+    'Pickup Date Type':         'estimated',
+    'Delivery Date Type':       'estimated'
+}
 
-# Mapping from CSV headers to readable-file columns
+# === Mapping & Order: output header → source column in input Excel ===
 CSV_TO_SOURCE_MAP = {
-    'VIN': 'Vin',
-    'Order ID': 'ShipmentNumber',
-    'Pickup State': 'OriginState',
-    'Pickup City': 'OriginCity',
-    'Pickup Street': 'OriginAddress',
-    'Pickup Zip Code': 'OriginZip',
-    'Pickup Contact Phone': 'OriginContactPhone',
-    'Delivery State': 'DestinationState',
-    'Delivery City': 'DestinationCity',
-    'Delivery Street': 'DestinationAddress',
-    'Delivery Zip Code': 'DestinationZip',
-    'Delivery Contact Phone': 'DestinationContactPhone',
-    'Carrier Price per Vehicle': 'Price',
-    'Carrier Pickup Scheduled At': 'ExpectedPickupDate',
-    'Carrier Delivery Scheduled At': 'NeedByDate'
+    '     ':                     None,
+    'model':                     None,  # decoded from VIN
+    'Carrier Price per Vehicle': None,
+    'Pickup State':              'OriginState',
+    'Pickup City':               'OriginCity',
+    'Delivery State':            'DestinationState',
+    'Delivery City':             'DestinationContact',
+    'Pickup Zip Code':           'OriginZip',
+    'VIN':                       'Vin',
+    'Order ID':                  'ShipmentNumber',
+    'Pickup Street':             'OriginAddress',
+    'Pickup Contact Phone':      'OriginContactPhone',
+    'Delivery Street':           'DestinationAddress',
+    'Delivery City':             'DestinationCity',
+    'Delivery Zip Code':         'DestinationZip',
+    'Delivery Contact Phone':    'DestinationContactPhone',
+    # — your new constant columns —
+    'Carrier Payment Method':    None,
+    'Carrier Payment Terms':     None,
+    'Pickup Date Type':          None,
+    'Delivery Date Type':        None
 }
 
-# Predefined static values for certain CSV headers
-PREDEFINED_VALUES = {
-    'Carrier Payment Method': 'check',
-    'Carrier Payment Terms': '10_days',
-    'Pickup Date Type': 'estimated',
-    'Delivery Date Type': 'estimated'
-}
-
-
-def clean_origin(df):
-    if 'Price' not in df.columns:
-        df['Price'] = ''
-    cols = [c for c in PREFERENCE_COLUMNS + ['Price'] + EXTRA_COLUMNS if c in df.columns]
-    df = df[cols]
-    extras = [c for c in EXTRA_COLUMNS if c in df.columns]
-    final_order = [c for c in FIRST_COLUMNS if c in df.columns] + \
-                  [c for c in OTHER_COLUMNS if c in df.columns] + extras
-    sort_cols = [c for c in SORT_ORDER if c in df.columns]
-    if sort_cols:
-        df = df.sort_values(by=sort_cols)
-    df = df[final_order]
-    return df
-
-
-def map_to_import_template(df):
-    # Load desired headers from template
-    tpl = pd.read_csv(IMPORT_TEMPLATE_CSV, nrows=0)
-    desired_headers = [h.strip() for h in tpl.columns.tolist()]
-    df_out = pd.DataFrame(index=df.index)
-    # Map or fill for each header
-    for header in desired_headers:
-        if header in PREDEFINED_VALUES:
-            df_out[header] = [PREDEFINED_VALUES[header]] * len(df)
-        elif header in CSV_TO_SOURCE_MAP:
-            src_col = CSV_TO_SOURCE_MAP[header]
-            if src_col in df.columns:
-                if header in ('Pickup State', 'Delivery State'):
-                    series = df[src_col].astype(str).str.upper().str.slice(0, 2)
-                elif header in ('Carrier Pickup Scheduled At', 'Carrier Delivery Scheduled At'):
-                    dt = pd.to_datetime(df[src_col], errors='coerce')
-                    series = dt.dt.strftime('%m/%d/%Y').fillna('')
-                else:
-                    series = df[src_col].astype(str)
-                df_out[header] = series
-            else:
-                df_out[header] = [''] * len(df)
-        else:
-            df_out[header] = [''] * len(df)
-    return df_out
-
-
-def to_excel_bytes(df):
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Sheet1')
-        ws = writer.sheets['Sheet1']
-        max_row, max_col = df.shape
-        ws.autofilter(0, 0, max_row, max_col-1)
-        ws.freeze_panes(1, 0)
-        ws.set_column(0, 0, FIRST_COLUMN_WIDTH)
-        if max_col > 1:
-            ws.set_column(1, max_col-1, OTHER_COLUMN_WIDTH)
-    buf.seek(0)
-    return buf
-
-
-def to_csv_bytes(df):
-    csv_str = df.to_csv(index=False)
-    buf = io.BytesIO(csv_str.encode('utf-8'))
-    buf.seek(0)
-    return buf
-
-@app.route('/', methods=['GET','POST'])
+@app.route('/', methods=['GET', 'POST'])
 def upload():
     if request.method == 'POST':
-        f_origin = request.files.get('origin')
-        f_csv = request.files.get('processed_csv')
-
-        if f_origin and f_origin.filename:
-            df = pd.read_excel(f_origin)
-            df_out = clean_origin(df)
-            out_buf = to_excel_bytes(df_out)
-            ext = 'xlsx'
-            suffix = 'readable'
-
-        elif f_csv and f_csv.filename:
-            df = pd.read_excel(f_csv)
-            df_out = map_to_import_template(df)
-            out_buf = to_csv_bytes(df_out)
-            ext = 'csv'
-            suffix = 'superdispatch'
-
-        else:
+        file = request.files.get('file')
+        if not file or not file.filename:
             return 'No file uploaded', 400
 
-        now = datetime.datetime.now()
-        date_str = f"{now.strftime('%B')}_{now.day}"
-        filename = f"{date_str}_{suffix}.{ext}"
+        # read the raw Excel
+        df_raw = pd.read_excel(file)
 
-        mimetype = 'text/csv' if ext == 'csv' else \
-                   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        # build output DataFrame in desired order
+        df_out = pd.DataFrame(index=df_raw.index)
+        for out_col, src_col in CSV_TO_SOURCE_MAP.items():
+
+            # 1) decoded from VIN
+            if out_col == 'model':
+                vin = df_raw.get('Vin', pd.Series([''] * len(df_raw))) \
+                           .astype(str).str.upper()
+                key = vin.str.slice(3, 4)
+                series = key.map(MODEL_MAP).fillna('')
+
+            # 2) constant‐value columns
+            elif out_col in CONST_COLS:
+                series = pd.Series([CONST_COLS[out_col]] * len(df_raw))
+
+            # 3) mapped from an existing source column
+            elif src_col and src_col in df_raw.columns:
+                # Convert to string, drop any trailing ".0" from floats
+                series = (
+                    df_raw[src_col]
+                    .fillna('')
+                    .astype(str)
+                    .str.replace(r'\.0$', '', regex=True)
+                )
+                # Zero-pad ZIP codes back to 5 digits
+                if out_col in ('Pickup Zip Code', 'Delivery Zip Code'):
+                    series = series.str.zfill(5)
+                # State abbreviations logic
+                if out_col in ('Pickup State', 'Delivery State'):
+                    temp = series.str.strip().str.upper()
+                    # if already abbreviated, keep; else map full state names
+                    series = temp.where(temp.str.len() == 2, temp.map(STATE_ABBR)).fillna('')
+
+            # 4) default: empty column
+            else:
+                series = pd.Series([''] * len(df_raw))
+
+            df_out[out_col] = series
+
+        # export to CSV bytes
+        buf = io.BytesIO(df_out.to_csv(index=False).encode('utf-8'))
+        buf.seek(0)
+
+        # filename with current date
+        now = datetime.datetime.now()
+        filename = f"{now.strftime('%B')}_{now.day}_superdispatch.csv"
+
         return send_file(
-            out_buf,
+            buf,
             as_attachment=True,
             download_name=filename,
-            mimetype=mimetype
+            mimetype='text/csv'
         )
-    # Render the styled template on GET
+
     return render_template('index.html')
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=5001)

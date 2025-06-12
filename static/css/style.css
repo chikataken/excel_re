@@ -16,3 +16,20 @@ body {
 h2.card-title {
   color: #2a2a2a;
 }
+
+/* Info-bubble under the main heading */
+.info-bubble {
+  background-color: #f5f5f5;   /* very light gray */
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.info-bubble ul {
+  margin: 0;
+  padding-left: 1.25rem;       /* indent bullets */
+}
+
+.info-bubble li {
+  color: #666666;              /* slightly gray font */
+  font-size: 0.9em;
+}

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Tesla Excel Cleaner</title>
+  <title>wastake.com</title>
   <!-- Bootstrap CSS -->
   <link
     href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
@@ -14,31 +14,64 @@
   <!-- Your custom styles -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
+
 <body class="bg-light">
   <div class="container py-5">
     <div class="card shadow-sm mx-auto" style="max-width:600px;">
       <div class="card-body">
-        <h2 class="card-title text-center mb-4">Tesla Excel Cleaner</h2>
-        <form method="post" enctype="multipart/form-data">
+        <h2 class="card-title text-center mb-2">Tesla → SuperDispatch</h2>
+
+        <!-- Info bubble -->
+        <div class="info-bubble mb-4">
+          <ul>
+            <li>*6/12* fixed error with state abbreviations and missing zips. <br> Should be <strong>good for direct submission to SuperDispatch</strong></li>
+            <li><strong style="color: red;">Do NOT EDIT Tesla downloaded excel</strong>, input it directly here before touching</li>
+            <li>For DIDI: set prices in CSV in <strong>"Carrier Price per Vehicle"</strong> column</li>
+            <li>Ignore zip codes with 4 digits, excel does not read leading zeros but CSVs have original zip codes for SuperDispatch "Import Orders"</li>
+          </ul>
+        </div>
+
+        <form id="uploadForm" method="post" enctype="multipart/form-data">
           <div class="mb-4">
-            <label class="form-label"><strong>1) Tesla → Readable</strong></label>
-            <input class="form-control" type="file" name="origin" accept=".xls,.xlsx">
+            <label class="form-label">
+              <strong>Tesla downloaded Excel → SuperDispatch CSV w/ price column</strong>
+            </label>
+            <input class="form-control"
+                   type="file"
+                   name="file"
+                   accept=".xls,.xlsx">
           </div>
-          <div class="mb-4">
-            <label class="form-label"><strong>2) Readable → SuperDispatch</strong></label>
-            <input class="form-control" type="file" name="processed_csv" accept=".xls,.xlsx">
-          </div>
+
           <button type="submit" class="btn btn-primary w-100">Process</button>
+
+          <!-- Confirmation text -->
+          <div id="downloadConfirm" class="mt-2 text-success fst-italic" style="display:none;">
+            CSV downloaded! *check downloads*
+          </div>
         </form>
       </div>
     </div>
   </div>
 
-  <!-- Optional Bootstrap JS (for custom components) -->
+  <!-- Bootstrap JS bundle -->
   <script
     src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"
     integrity="sha384-…"
     crossorigin="anonymous"
   ></script>
+
+  <!-- Clear file input after submission -->
+  <script>
+    const form = document.getElementById('uploadForm');
+    const confirmTxt = document.getElementById('downloadConfirm');
+    form.addEventListener('submit', function() {
+      // show the “downloaded” message once the browser starts the download
+      setTimeout(() => {
+        confirmTxt.style.display = 'block';
+      }, 500);
+      // reset the file input
+      setTimeout(() => this.reset(), 500);
+    });
+  </script>
 </body>
 </html>
